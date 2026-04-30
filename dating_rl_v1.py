@@ -38,75 +38,88 @@ def reset_episode():
     return state_to_id(interest, 0, tone)
 
 
+def reset_episode_hard():
+    interest = np.random.choice([0, 1], p=[0.60, 0.40])
+    tone = np.random.choice([0, 1], p=[0.60, 0.40])
+    return state_to_id(interest, 0, tone)
+
+
+def compute_reward(old_state, new_state, outcome):
+    if outcome == "date_success":
+        return 30.0
+    if outcome == "date_failed":
+        return -5.0
+    if outcome == "ghosted":
+        return -5.0
+    if outcome == "ended_by_agent":
+        return -1.0
+
+    old_i, old_s, old_t = old_state
+    new_i, new_s, new_t = new_state
+    progress_reward = (
+        0.25 * (new_s - old_s)
+        + 0.15 * (new_i - old_i)
+        + 0.05 * (new_t - old_t)
+    )
+    return progress_reward - 0.10
+
+
 def simulator_step(state_id, action):
     interest, stage, tone = id_to_state(state_id)
-    reward = -0.02
+    old_state = (interest, stage, tone)
     done = False
     outcome = None
-    noise = np.random.choice([-1, 0, 1], p=[0.15, 0.70, 0.15])
+    noise = np.random.choice([-1, 0, 1], p=[0.10, 0.80, 0.10])
+
     if action == 0:
         interest += np.random.choice([0, 1], p=[0.55, 0.45])
         tone += np.random.choice([0, 1], p=[0.50, 0.50])
-        reward += 0.10
     elif action == 1:
         if tone >= 1:
             interest += 1
-            reward += 0.15
         else:
             tone -= 1
-            reward -= 0.10
     elif action == 2:
         if stage >= 1:
             interest += np.random.choice([0, 1], p=[0.45, 0.55])
             tone += 1
-            reward += 0.12
-        else:
-            reward -= 0.03
     elif action == 3:
         if tone == 2:
             interest += 1
-            reward += 0.18
         else:
             tone += np.random.choice([-1, 1], p=[0.45, 0.55])
-            reward += 0.02
     elif action == 4:
         if interest >= 1 and tone >= 1:
             stage += 1
-            reward += 0.20
         else:
             interest -= 1
             tone -= 1
-            reward -= 0.20
     elif action == 5:
         if interest == 2 and tone == 2:
-            reward += 2.00
             done = True
-            outcome = "date_success"
+            outcome = "date_success" if np.random.random() < 0.75 else "date_failed"
         elif interest >= 1 and stage == 2:
-            reward += 0.70
-            done = np.random.random() < 0.50
-            if done:
-                outcome = "date_success"
+            done = True
+            outcome = "date_success" if np.random.random() < 0.45 else "date_failed"
         else:
-            interest -= 1
-            tone -= 1
-            reward -= 0.45
+            done = True
+            outcome = "date_failed"
     elif action == 6:
         tone += 1
-        reward += 0.05
-        if interest == 0:
-            reward += 0.05
+        if interest == 0 and np.random.random() < 0.30:
+            interest += 1
     elif action == 7:
-        reward += 0.20 if interest == 0 else -0.15
         done = True
         outcome = "ended_by_agent"
+
     interest = clamp(interest + noise, 0, N_INTEREST - 1)
     stage = clamp(stage, 0, N_STAGE - 1)
     tone = clamp(tone, 0, N_TONE - 1)
     next_state_id = state_to_id(interest, stage, tone)
     if not done and np.random.random() < 0.03:
         done = True
-        outcome = "fizzled"
+        outcome = "ghosted"
+    reward = compute_reward(old_state, (interest, stage, tone), outcome)
     return next_state_id, reward, done, outcome
 
 
@@ -136,8 +149,9 @@ def rule_based_action(state_id):
 
 
 def run_episode(Q=None, policy_fn=None, epsilon=0.0, max_steps=25,
+                reset_fn=reset_episode,
                 learn=False, alpha=0.1, gamma=0.95):
-    state_id = reset_episode()
+    state_id = reset_fn()
     total_reward = 0.0
     for step in range(max_steps):
         if policy_fn is not None:
@@ -159,12 +173,12 @@ def run_episode(Q=None, policy_fn=None, epsilon=0.0, max_steps=25,
     return total_reward, max_steps, "max_steps"
 
 
-def summarize_policy(episodes=1000, Q=None, policy_fn=None):
+def summarize_policy(episodes=1000, Q=None, policy_fn=None, reset_fn=reset_episode):
     rewards = []
     lengths = []
     n_dates = 0
     for _ in range(episodes):
-        reward, length, outcome = run_episode(Q=Q, policy_fn=policy_fn)
+        reward, length, outcome = run_episode(Q=Q, policy_fn=policy_fn, reset_fn=reset_fn)
         rewards.append(reward)
         lengths.append(length)
         if outcome == "date_success":
@@ -180,19 +194,95 @@ def rule_based_baseline(episodes=1000):
     return summarize_policy(episodes, policy_fn=rule_based_action)
 
 
-def train_q_learning(episodes=8000):
+def train_q_learning(episodes=8000, reset_fn=reset_episode):
     Q = np.zeros((N_STATES, N_ACTIONS))
     rewards = []
 
     for episode in range(episodes):
         epsilon = max(0.05, 1.0 - episode / (episodes * 0.75))
-        reward, _, _ = run_episode(Q=Q, epsilon=epsilon, learn=True)
+        reward, _, _ = run_episode(Q=Q, epsilon=epsilon, reset_fn=reset_fn, learn=True)
         rewards.append(reward)
     return Q, rewards
 
 
-def evaluate_policy(Q, episodes=1000):
-    return summarize_policy(episodes, Q=Q)
+def run_episode_sarsa(Q, epsilon=0.0, max_steps=25, reset_fn=reset_episode,
+                      learn=False, alpha=0.1, gamma=0.95):
+    state_id = reset_fn()
+    action = choose_action(Q, state_id, epsilon)
+    total_reward = 0.0
+
+    for step in range(max_steps):
+        next_state_id, reward, done, outcome = simulator_step(state_id, action)
+        total_reward += reward
+
+        if done:
+            if learn:
+                Q[state_id, action] += alpha * (reward - Q[state_id, action])
+            return total_reward, step + 1, outcome
+
+        next_action = choose_action(Q, next_state_id, epsilon)
+        if learn:
+            target = reward + gamma * Q[next_state_id, next_action]
+            Q[state_id, action] += alpha * (target - Q[state_id, action])
+        state_id = next_state_id
+        action = next_action
+
+    return total_reward, max_steps, "max_steps"
+
+
+def train_sarsa(episodes=8000, reset_fn=reset_episode):
+    Q_sarsa = np.zeros((N_STATES, N_ACTIONS))
+    rewards = []
+
+    for episode in range(episodes):
+        epsilon = max(0.05, 1.0 - episode / (episodes * 0.75))
+        reward, _, _ = run_episode_sarsa(Q_sarsa, epsilon=epsilon, reset_fn=reset_fn, learn=True)
+        rewards.append(reward)
+    return Q_sarsa, rewards
+
+
+def evaluate_any_policy(name, episodes=1000, Q=None, policy_fn=None,
+                        reset_fn=reset_episode, sarsa=False):
+    rewards = []
+    lengths = []
+    n_dates = 0
+    for _ in range(episodes):
+        if sarsa:
+            reward, length, outcome = run_episode_sarsa(Q, epsilon=0.0, reset_fn=reset_fn)
+        else:
+            reward, length, outcome = run_episode(Q=Q, policy_fn=policy_fn, reset_fn=reset_fn)
+        rewards.append(reward)
+        lengths.append(length)
+        if outcome == "date_success":
+            n_dates += 1
+    return {
+        "policy": name,
+        "avg_reward": float(np.mean(rewards)),
+        "avg_length": float(np.mean(lengths)),
+        "date_rate": n_dates / episodes,
+    }
+
+
+def evaluate_policy(Q, episodes=1000, reset_fn=reset_episode):
+    result = evaluate_any_policy("Q-learning", episodes=episodes, Q=Q, reset_fn=reset_fn)
+    return result["avg_reward"], result["avg_length"], result["date_rate"]
+
+
+def compare_policies(Q, Q_sarsa, episodes=3000, reset_fn=reset_episode):
+    results = [
+        evaluate_any_policy("Random", episodes=episodes, reset_fn=reset_fn),
+        evaluate_any_policy("Rule-based", episodes=episodes, policy_fn=rule_based_action, reset_fn=reset_fn),
+        evaluate_any_policy("Q-learning", episodes=episodes, Q=Q, reset_fn=reset_fn),
+        evaluate_any_policy("SARSA", episodes=episodes, Q=Q_sarsa, reset_fn=reset_fn, sarsa=True),
+    ]
+    print(f"{'Policy':<14} {'avg_reward':>10} {'length':>8} {'date_rate':>10}")
+    print("-" * 47)
+    for row in results:
+        print(
+            f"{row['policy']:<14} {row['avg_reward']:>10.3f} "
+            f"{row['avg_length']:>8.2f} {row['date_rate']:>9.1%}"
+        )
+    return results
 
 
 def print_learned_policy(Q):
@@ -279,24 +369,13 @@ def main():
     random.seed(7)
     print(f"States: {N_STATES} = interest(3) x stage(3) x tone(3)")
     print(f"Actions: {N_ACTIONS} = {', '.join(ACTIONS)}")
-    base_reward, base_length, base_date_rate = random_baseline()
-    rule_reward, rule_length, rule_date_rate = rule_based_baseline()
     Q, training_rewards = train_q_learning()
-    learned_reward, learned_length, learned_date_rate = evaluate_policy(Q)
+    Q_sarsa, sarsa_rewards = train_sarsa()
     last_500 = np.mean(training_rewards[-500:])
+    sarsa_last_500 = np.mean(sarsa_rewards[-500:])
     print(f"\nTraining: last 500 episode avg reward={last_500:.3f}")
-    print(
-        f"Random:     avg_reward={base_reward:.3f}  "
-        f"length={base_length:.2f}  date_rate={base_date_rate:.1%}"
-    )
-    print(
-        f"Rule-based: avg_reward={rule_reward:.3f}  "
-        f"length={rule_length:.2f}  date_rate={rule_date_rate:.1%}"
-    )
-    print(
-        f"Q-learned:  avg_reward={learned_reward:.3f}  "
-        f"length={learned_length:.2f}  date_rate={learned_date_rate:.1%}"
-    )
+    print(f"SARSA:      last 500 episode avg reward={sarsa_last_500:.3f}\n")
+    compare_policies(Q, Q_sarsa)
 
     print_learned_policy(Q)
 
