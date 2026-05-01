@@ -4,4 +4,5 @@ __pycache__/
 .DS_Store
 data/*.jsonl
 data/*.csv
+data/*.npy
 archive/

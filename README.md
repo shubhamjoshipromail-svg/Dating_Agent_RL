@@ -57,6 +57,20 @@ Install dependencies:
 
 pip install -r requirements.txt
 
+## Railway deployment
+
+This repo includes `railway.json` with the Streamlit start command:
+
+streamlit run app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true --browser.gatherUsageStats=false
+
+In Railway, set these environment variables:
+
+KIMI_API_KEY=your_key_here
+KIMI_BASE_URL=https://api.moonshot.ai/v1
+KIMI_MODEL=moonshot-v1-8k
+
+The local `.env` file is ignored by git and is not deployed.
+
 ## Warning
 
 Do not hardcode API keys in notebooks.
