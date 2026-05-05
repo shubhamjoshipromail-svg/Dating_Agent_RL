@@ -45,6 +45,29 @@ notebooks/Dating_Agent_RL_current.ipynb
 4. Train from the cached LLM environment without repeated API calls.
 5. Use the LLM classifier only for demo/interface.
 
+## Streamlit frontend modes
+
+The deployed frontend supports two testing modes:
+
+1. **LLM demo mode**
+   You type your message, the LLM roleplays the other person, the classifier maps
+   that reply into the discrete RL state, and the Q-table recommends the next
+   abstract action.
+
+2. **Human / real input mode**
+   You paste the real other person's latest reply. The classifier maps that text
+   into the discrete RL state, and the Q-table recommends the next abstract
+   action.
+
+The app caches turns and observed outcomes in:
+
+- `data/conversation_turns.jsonl`
+- `data/conversation_transitions.jsonl`
+
+Replay training from cached transitions is deliberate: press the replay-training
+button in the frontend to create `data/Q_conversation_replay.npy`. The app does
+not silently self-train on every message.
+
 ## Setup
 
 Create a `.env` file based on `.env.example`:
